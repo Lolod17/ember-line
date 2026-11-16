@@ -51,8 +51,8 @@ export function drawHud(ctx, h) {
   text(ctx, String(h.wave), 360, 58, 28, COLORS.hud, 'left', 800);
 
   // Water: a bar that drains as breaks are painted.
-  const bx = 450;
-  const bw = 300;
+  const bx = 440;
+  const bw = 250;
   text(ctx, 'WATER', bx, 30, 12, DIM, 'left', 700, 2);
   text(ctx, `${h.water} / ${h.budget}`, bx + bw, 30, 12, COLORS.hud, 'right', 700);
   ctx.fillStyle = '#26221E';
@@ -64,10 +64,15 @@ export function drawHud(ctx, h) {
   ctx.lineWidth = 1;
   ctx.strokeRect(bx + 0.5, 40.5, bw - 1, 13);
 
-  text(ctx, 'TREES', 790, 30, 12, DIM, 'left', 700, 2);
-  text(ctx, String(h.trees), 790, 58, 24, COLORS.hud, 'left', 700);
+  text(ctx, 'TREES', 720, 30, 12, DIM, 'left', 700, 2);
+  text(ctx, String(h.trees), 720, 58, 24, COLORS.hud, 'left', 700);
 
-  const chipX = 880;
+  // Houses standing, counted by the same test that ends the run (fire on a village cell).
+  const houseColor = h.houses === 0 ? COLORS.danger : h.houses * 2 < h.housesTotal ? COLORS.accent : COLORS.hud;
+  text(ctx, 'HOUSES', 806, 30, 12, DIM, 'left', 700, 2);
+  text(ctx, `${h.houses}/${h.housesTotal}`, 806, 58, 24, houseColor, 'left', 700);
+
+  const chipX = 916;
   ctx.fillStyle = h.erase ? '#5A2A1E' : '#2A2722';
   ctx.fillRect(chipX, 34, 84, 26);
   text(ctx, h.erase ? 'ERASE' : 'PAINT', chipX + 42, 52, 13, h.erase ? '#FFB89A' : COLORS.hud, 'center', 800, 2);
@@ -79,16 +84,15 @@ export function drawHud(ctx, h) {
   text(ctx, hint, W / 2, VIEW.height - 6, 13, DIM, 'center', 500);
 }
 
-export function drawTitle(ctx, anim, frozen) {
+export function drawTitle(ctx, anim) {
   veil(ctx, 0.62);
   ctx.fillStyle = 'rgba(18,16,14,0.7)';
   ctx.fillRect(0, 200, W, 330);
   wordmark(ctx, W / 2, 330, 112, anim);
   text(ctx, 'Fire spreads tick by tick. Paint firebreaks with a fixed ration of water — keep it from the village.',
     W / 2, 418, 20, COLORS.hud, 'center', 500);
-  const pulse = frozen ? 1 : 0.6 + 0.4 * Math.abs(Math.sin(anim / 30));
-  ctx.globalAlpha = pulse;
-  text(ctx, 'click to start', W / 2, 474, 26, COLORS.accent, 'center', 800, 4);
+  ctx.globalAlpha = 0.6 + 0.4 * Math.abs(Math.sin(anim / 30));
+  text(ctx, 'press space to start', W / 2, 474, 26, COLORS.accent, 'center', 800, 4);
   ctx.globalAlpha = 1;
   text(ctx, 'drag to paint  ·  X erase  ·  Space next wave  ·  P pause  ·  R restart', W / 2, 510, 14, DIM, 'center', 500);
 }
@@ -137,20 +141,42 @@ export function drawCleared(ctx, s) {
   text(ctx, 'Space or click: next wave   ·   R: restart run', W / 2, y + 336, 15, COLORS.hud, 'center', 600);
 }
 
-/** Game over: the whole run's breakdown and a restart prompt. */
+/**
+ * Game over: a narrow, see-through card at the right of the board so the burning village at the
+ * centre stays in view over a dimmed field that keeps animating behind it.
+ */
 export function drawOver(ctx, s) {
-  veil(ctx, 0.55);
-  const { x, y } = panel(ctx, 600, 400);
-  text(ctx, 'THE VILLAGE BURNS', W / 2, y + 64, 40, COLORS.fire, 'center', 800, 4);
-  text(ctx, `the line broke on wave ${s.wave}`, W / 2, y + 96, 16, DIM, 'center', 500);
-  breakdownRows(ctx, x + 50, y + 152, 500, rowsFor(s.trees, s.waves, s.water));
-  text(ctx, 'FINAL SCORE', x + 50, y + 294, 16, DIM, 'left', 700, 2);
-  text(ctx, s.total.toLocaleString('en-US'), x + 550, y + 298, 36, COLORS.accent, 'right', 800);
-  text(ctx, 'Press R or click to start a new run', W / 2, y + 362, 18, COLORS.hud, 'center', 700, 1);
+  veil(ctx, 0.4);
+
+  const w = 330;
+  const h = 392;
+  const x = GRID.x + GRID.cols * GRID.cell - w - 24;
+  const y = (VIEW.height - h) / 2 + 14;
+  ctx.fillStyle = 'rgba(20,17,14,0.86)';
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = COLORS.fire;
+  ctx.fillRect(x, y, 4, h);
+  const lx = x + 30;
+  text(ctx, 'THE VILLAGE', lx, y + 54, 32, COLORS.fire, 'left', 800, 3);
+  text(ctx, 'BURNS', lx, y + 90, 32, COLORS.fire, 'left', 800, 3);
+  text(ctx, `the line broke on wave ${s.wave}`, lx, y + 118, 15, DIM, 'left', 500);
+  const lines = [
+    [`${s.trees.toLocaleString('en-US')} trees saved`, s.trees * SCORE.tree],
+    [`${s.waves} ${s.waves === 1 ? 'wave' : 'waves'} survived`, s.waves * SCORE.wave],
+    [`${s.water.toLocaleString('en-US')} water left`, s.water * SCORE.water],
+  ];
+  lines.forEach(([label, pts], k) => {
+    const ly = y + 160 + k * 30;
+    text(ctx, label, lx, ly, 18, COLORS.hud, 'left', 500);
+    text(ctx, `+${pts.toLocaleString('en-US')}`, x + w - 30, ly, 16, DIM, 'right', 600);
+  });
+  text(ctx, 'FINAL SCORE', lx, y + 270, 13, DIM, 'left', 700, 2);
+  text(ctx, s.total.toLocaleString('en-US'), lx, y + 312, 44, COLORS.accent, 'left', 800);
+  text(ctx, 'R, Space or click: new run', lx, y + 360, 15, COLORS.hud, 'left', 700, 1);
 }
 
 export function drawPaused(ctx) {
-  veil(ctx, 0.5);
+  veil(ctx, 0.4);
   panel(ctx, 380, 140);
   text(ctx, 'PAUSED', W / 2, VIEW.height / 2 + 14, 38, COLORS.hud, 'center', 800, 6);
   text(ctx, 'P to resume', W / 2, VIEW.height / 2 + 48, 15, DIM, 'center', 500);

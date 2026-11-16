@@ -1,31 +1,33 @@
 // EMBER LINE: boot, the fixed-timestep loop and the state machine.
-// States: title -> play -> (cleared -> play ...) -> over -> play. `paused` holds play still;
-// `frozen` holds a staged ?state= scene still for a reproducible screenshot until any input.
+// States: title -> play -> (cleared -> play ...) -> over -> play. `paused` holds play still.
+// The game always boots into the title; every later state is reached by playing.
 import {
-  STEP, MAX_STEPS_PER_FRAME, MAX_FRAME, SCORE, SHOT_SEED, COLORS,
+  STEP, MAX_STEPS_PER_FRAME, MAX_FRAME, SCORE, COLORS, HOUSES, SHAKE,
   ignitionsFor, tpsFor, waterFor,
 } from './config.js';
-import { createRng, waveSeed } from './rng.js';
-import { createBoard, ignite, tick, countTrees, EVENT_CLEAR, EVENT_VILLAGE } from './grid.js';
+import { createRng, waveSeed, cellHash } from './rng.js';
+import {
+  createBoard, ignite, tick, countTrees, countHouses, fireIsOut, EVENT_CLEAR, EVENT_VILLAGE,
+} from './grid.js';
 import { createWater, strokeCells, cellAt, cellClamped } from './paint.js';
 import { createInput, fitCanvas } from './input.js';
 import { drawBoard } from './render.js';
 import { drawHud, drawTitle, drawCleared, drawOver, drawPaused } from './hud.js';
-import { stageScene, boxAround, burnFor, SCENES } from './demo.js';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const status = document.getElementById('status');
 
-const params = new URLSearchParams(window.location.search);
-const scene = SCENES.includes(params.get('state')) ? params.get('state') : null;
-const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
-const fixedSeed = scene ? SHOT_SEED : Number.isInteger(seedParam) ? seedParam : null;
+// ?seed=N fixes the run seed, for replaying a particular forest.
+const seedParam = Number.parseInt(new URLSearchParams(window.location.search).get('seed') ?? '', 10);
+const fixedSeed = Number.isInteger(seedParam) ? seedParam : null;
+
+// Screen shake is skipped entirely for players who ask for reduced motion.
+const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
 
 const game = {
   state: 'title',
   paused: false,
-  frozen: false,
   erase: false,
   runs: 0,
   seed: fixedSeed ?? 1,
@@ -39,6 +41,9 @@ const game = {
   last: null,
   stroke: null,
   titleBoard: null,
+  titleTick: 0,
+  shake: 0,        // simulation steps of screen shake left
+  breached: false, // this wave's line has already been breached (shake once per wave)
 };
 
 function announce(message) {
@@ -60,6 +65,8 @@ function startWave(n) {
   game.tickAcc = 0;
   game.stroke = null;
   game.paused = false;
+  game.shake = 0;
+  game.breached = false;
   game.state = 'play';
   announce(`Wave ${n}: ${game.board.ignitions.length} fires. Water ${game.water.budget}. Score ${score()}.`);
 }
@@ -75,6 +82,13 @@ function startRun(seed) {
 function fireTick() {
   const event = tick(game.board);
   if (game.state !== 'play') return;
+  // First breach of the wave (see breachOf in grid.js for the exact condition): shake once.
+  if (game.board.breach && !game.breached) {
+    game.breached = true;
+    if (!reducedMotion?.matches) game.shake = SHAKE.steps;
+    if (game.board.breach === 'house') announce(`Fire is at the houses on wave ${game.wave}.`);
+    else announce(`The fire is past your line on wave ${game.wave}.`);
+  }
   if (event === EVENT_VILLAGE) {
     game.state = 'over';
     game.stroke = null;
@@ -92,12 +106,12 @@ function fireTick() {
   }
 }
 
-function makeTitleBoard() {
-  const s = waveSeed(game.seed, 0);
+// The title's backdrop is a live forest: three fires burn in slowly from the edges, and a fresh
+// forest replaces it once they are out. Nothing is staged; it is the rules running unattended.
+function makeTitleBoard(n) {
+  const s = waveSeed(game.seed, 1000 + n);
   const board = createBoard(s);
   ignite(board, createRng(s ^ 0x5bd1e995), 3);
-  boxAround(board, createWater(60), board.ignitions[1], 4);
-  burnFor(board, 22);
   return board;
 }
 
@@ -109,10 +123,6 @@ function advance() {
 }
 
 function handle(ev) {
-  if (game.frozen) {
-    game.frozen = false;
-    return; // the first input only wakes a staged scene
-  }
   if (ev.type === 'key') {
     if (ev.action === 'advance') {
       if (game.state === 'play' && game.paused) game.paused = false;
@@ -150,10 +160,22 @@ function handle(ev) {
 
 // --- loop ------------------------------------------------------------------------------------
 
+const TITLE_TICK_EVERY = 12; // simulation steps per title-backdrop fire tick (5 per second)
+
 function step() {
-  if (game.frozen || game.paused) return;
+  if (game.paused) return;
   game.anim += 1;
-  if (game.state === 'title') return;
+  if (game.shake > 0) game.shake -= 1;
+  if (game.state === 'title') {
+    if (game.anim % TITLE_TICK_EVERY === 0) {
+      tick(game.titleBoard);
+      if (fireIsOut(game.titleBoard)) {
+        game.titleTick += 1;
+        game.titleBoard = makeTitleBoard(game.titleTick);
+      }
+    }
+    return;
+  }
   game.tickAcc += game.tps * STEP;
   while (game.tickAcc >= 1) {
     game.tickAcc -= 1;
@@ -177,26 +199,35 @@ function render() {
   ctx.setTransform(k, 0, 0, k, viewport.dpr * viewport.offsetX, viewport.dpr * viewport.offsetY);
   if (game.state === 'title') {
     drawBoard(ctx, game.titleBoard, { anim: game.anim });
-    drawTitle(ctx, game.anim, game.frozen);
+    drawTitle(ctx, game.anim);
     return;
   }
   const p = input.pointer;
   const hoverCell = game.state === 'play' && !game.paused && p.inside ? cellAt(p.x, p.y) : null;
+  // The board shakes; the HUD, drawn after it, stays put and covers any spill at the top.
+  ctx.save();
+  if (game.shake > 0) {
+    const amp = SHAKE.amp * (game.shake / SHAKE.steps);
+    ctx.translate((cellHash(game.shake, 91) * 2 - 1) * amp, (cellHash(game.shake, 97) * 2 - 1) * amp);
+  }
+  drawBoard(ctx, game.board, { anim: game.anim, hover: hoverCell && { ...hoverCell, erase: game.erase } });
+  ctx.restore();
   drawHud(ctx, {
     wave: game.wave,
     water: game.water.left,
     budget: game.water.budget,
     trees: countTrees(game.board),
+    houses: countHouses(game.board),
+    housesTotal: HOUSES.length,
     erase: game.erase,
     score: score(),
   });
-  drawBoard(ctx, game.board, { anim: game.anim, hover: hoverCell && { ...hoverCell, erase: game.erase } });
   if (game.state === 'cleared') {
     drawCleared(ctx, { ...game.last, total: score() });
   } else if (game.state === 'over') {
     const b = game.banked;
     drawOver(ctx, { wave: game.wave, trees: b.trees, waves: b.waves, water: b.water, total: score() });
-  } else if (game.paused && !game.frozen) {
+  } else if (game.paused) {
     drawPaused(ctx);
   }
 }
@@ -220,7 +251,7 @@ function frame(now) {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
-    if (game.state === 'play' && !game.frozen) game.paused = true;
+    if (game.state === 'play') game.paused = true;
   } else {
     last = null;
     acc = 0;
@@ -229,14 +260,29 @@ document.addEventListener('visibilitychange', () => {
 
 // --- boot ------------------------------------------------------------------------------------
 
-game.titleBoard = makeTitleBoard();
-if (scene) {
-  stageScene(scene, SHOT_SEED, { game, startRun, startWave, fireTick });
-  game.frozen = true;
-  announce(`EMBER LINE, staged ${scene} scene, paused.`);
-} else {
-  announce('EMBER LINE. Click to start.');
-}
+game.titleBoard = makeTitleBoard(0);
+announce('EMBER LINE. Press Space or click to start.');
+
+// A read-only view of what the screen shows, for automated play-testing. It returns copies and
+// offers no way to change the game: every state change still has to come from input.
+window.emberline = Object.freeze({
+  snapshot() {
+    const b = game.state === 'title' ? null : game.board;
+    return {
+      state: game.state,
+      paused: game.paused,
+      wave: game.wave,
+      water: game.water ? game.water.left : 0,
+      budget: game.water ? game.water.budget : 0,
+      trees: b ? countTrees(b) : 0,
+      houses: b ? countHouses(b) : HOUSES.length,
+      score: score(),
+      shake: game.shake,
+      breached: game.breached,
+      ignitions: b ? b.ignitions.map((g) => ({ ...g })) : [],
+      cells: b ? Array.from(b.type) : [],
+    };
+  },
+});
 render();
-window.__emberReady = true;
 requestAnimationFrame(frame);

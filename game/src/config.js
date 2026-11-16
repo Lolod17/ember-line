@@ -20,6 +20,29 @@ export const VILLAGE_SHAPE = [
   [-1, 1], [0, 1],
 ];
 
+// The houses drawn on that footprint: nine of them, each owning one or more village cells (as
+// offsets from the centre cell, like VILLAGE_SHAPE). A house is lost the moment fire takes any
+// cell it owns; that is the same test the rules use to end the run (fire reaching a village
+// cell). Eight cottages ring a larger hall that owns the four inner cells.
+export const HOUSES = [
+  { cells: [[-1, -2]], w: 20, h: 12 },
+  { cells: [[0, -2]], w: 18, h: 11 },
+  { cells: [[-2, -1]], w: 19, h: 12 },
+  { cells: [[1, -1]], w: 20, h: 11 },
+  { cells: [[-1, -1], [0, -1], [-1, 0], [0, 0]], w: 34, h: 17 },
+  { cells: [[-2, 0]], w: 18, h: 12 },
+  { cells: [[1, 0]], w: 19, h: 12 },
+  { cells: [[-1, 1]], w: 20, h: 11 },
+  { cells: [[0, 1]], w: 18, h: 12 },
+];
+
+// Fire within this many cells (orthogonal steps) of a standing house raises smoke on that side.
+export const SMOKE_RANGE = 3;
+
+// Screen shake on the first breach of a wave: duration in simulation steps (15 = 250 ms) and
+// peak amplitude in view pixels.
+export const SHAKE = { steps: 15, amp: 6 };
+
 // Simulation timing.
 export const STEP = 1 / 60;            // fixed simulation step (seconds)
 export const MAX_STEPS_PER_FRAME = 6;  // capped catch-up after a slow frame
@@ -75,9 +98,8 @@ export const COLORS = {
   village: '#E8E2D4',
   hud: '#F2EDE3',
   accent: '#FFB03A',
+  danger: '#E8503A',
+  rim: '#FFE7A0',
 };
 
 export const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
-
-// Fixed seed used by ?state= screenshot scenes.
-export const SHOT_SEED = 34016461;
