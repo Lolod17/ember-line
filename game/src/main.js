@@ -90,6 +90,8 @@ function fireTick() {
     else announce(`The fire is past your line on wave ${game.wave}.`);
   }
   if (event === EVENT_VILLAGE) {
+    // Bank the water still on the bar, once, at the only transition into `over`.
+    game.banked.water += game.water.left;
     game.state = 'over';
     game.stroke = null;
     announce(`The village burns on wave ${game.wave}. Final score ${score()}. Press R to start again.`);
