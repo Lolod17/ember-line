@@ -39,45 +39,88 @@ export const HOUSES = [
 // Fire within this many cells (orthogonal steps) of a standing house raises smoke on that side.
 export const SMOKE_RANGE = 3;
 
-// Screen shake on the first breach of a wave: duration in simulation steps (15 = 250 ms) and
-// peak amplitude in view pixels.
+// The fields: every cell within this Euclidean distance (in cells) of a village cell is a
+// field. Fields burn like forest but cannot be dug, so no break can hug the houses: the tightest
+// ring that closes around the fields costs RING_MIN water (see rampTable in this file).
+export const FIELD_RADIUS = 3;
+export const RING_MIN = 28;
+
+// Screen shake, in simulation steps (60 = 1 s) and peak amplitude in view pixels.
+//  - breach: fire reaches the cells beside a house (once per wave).
+//  - touch: fire stands on the far side of a painted break, i.e. a line has just stopped working.
+//    Softer and shorter, at most once per `cooldown` steps.
 export const SHAKE = { steps: 15, amp: 6 };
+export const SHAKE_TOUCH = { steps: 9, amp: 2.5, cooldown: 45 };
+
+// Dust kicked up when a firebreak stroke completes: 8 to 14 grey motes along the drawn line,
+// each living `life` simulation steps (40 = 0.67 s). Motion is a pure function of the tick.
+export const DUST = { min: 8, max: 14, life: 40 };
 
 // Simulation timing.
 export const STEP = 1 / 60;            // fixed simulation step (seconds)
 export const MAX_STEPS_PER_FRAME = 6;  // capped catch-up after a slow frame
 export const MAX_FRAME = 0.25;         // a longer stall is dropped, not replayed
 
-// Fire behaviour.
+// Fire behaviour, counted in fire ticks. How many simulation steps a fire tick lasts is the
+// per-wave `tickSteps` in RAMP below.
 export const FIRE = {
-  baseTps: 6,          // fire ticks per second on wave 1
-  tpsPerWave: 0.45,    // each wave ticks a little faster ...
-  maxTps: 9,           // ... up to this cap
   spreadAge: 2,        // a burning cell spreads once it has burned this many ticks
   burnTicks: 16,       // then it burns out and becomes ash
   kindleTicks: 8,      // fresh ignitions smoulder this long before they can spread
-  ignitionLen: 3,      // each ignition lights a short run of edge cells
+  ignitionLen: 3,      // each ignition lights a short run of cells
+  innerDistance: 8,    // an inland ignition lands at least this far (cells) from every house
 };
 
-// Water: the only constraint. One unit of water paints one break cell along the drawn line;
-// painting over an existing break is free. Budget is per wave and never refills inside it.
-export const WATER = {
-  base: 140,
-  perWave: 8,
-  min: 72,
-};
+// A run is won by holding the line through this many waves. There is no wave WIN_WAVES + 1.
+export const WIN_WAVES = 8;
 
-// Ignitions per wave: 2 on wave 1, rising to 4.
-export function ignitionsFor(wave) {
-  return Math.min(4, 2 + Math.floor((wave - 1) / 2));
+// The difficulty ramp, one row per wave. This table is the whole curve.
+//  edge     fires lit on the board's edge (a 3-cell run)
+//  inner    fires lit anywhere inland, at least FIRE.innerDistance from the houses: they skip
+//           the long walk in from the edge, so they are the panic
+//  water    units of break the player may draw this wave (1 unit = 1 break cell)
+//  tickSteps simulation steps per fire tick. A front advances one cell every
+//           (FIRE.spreadAge + 1) fire ticks, so the spread interval is 3 * tickSteps steps and
+//           the front moves 60 / (3 * tickSteps) cells per second.
+// Caps, and why:
+//  - water never drops below 32 = RING_MIN + 4: the cheapest guaranteed defence (a ring around
+//    the fields) always fits, with four cells of slack for a hand-drawn, imperfect ring.
+//  - tickSteps never drops below 7 (2.9 cells/s): an inland fire 8 cells out then needs at least
+//    2.3 s to reach the ring's line, enough for a fast hand to close a 28-cell ring. Any faster
+//    and the last waves would be lost before a human could finish drawing.
+//  - at most 6 fires: ignitions keep 10 cells apart so each reads as its own fire.
+export const RAMP = [
+  { edge: 2, inner: 0, water: 110, tickSteps: 12 }, // 1  calm: two edge fires, plenty of water
+  { edge: 2, inner: 0, water: 92, tickSteps: 11 },  // 2
+  { edge: 2, inner: 1, water: 70, tickSteps: 9 },   // 3  first inland fire
+  { edge: 3, inner: 1, water: 50, tickSteps: 8 },   // 4
+  { edge: 3, inner: 2, water: 34, tickSteps: 8 },   // 5  a hand-drawn ring takes nearly all of it
+  { edge: 3, inner: 2, water: 33, tickSteps: 7 },   // 6
+  { edge: 4, inner: 2, water: 32, tickSteps: 7 },   // 7
+  { edge: 4, inner: 2, water: 32, tickSteps: 7 },   // 8  last wave
+];
+
+export function rampFor(wave) {
+  return RAMP[Math.max(0, Math.min(RAMP.length, wave) - 1)];
 }
 
-export function tpsFor(wave) {
-  return Math.min(FIRE.maxTps, FIRE.baseTps + FIRE.tpsPerWave * (wave - 1));
+export function ignitionsFor(wave) {
+  const w = rampFor(wave);
+  return w.edge + w.inner;
 }
 
 export function waterFor(wave) {
-  return Math.max(WATER.min, WATER.base - WATER.perWave * (wave - 1));
+  return rampFor(wave).water;
+}
+
+/** Simulation steps per fire tick on this wave. */
+export function tickStepsFor(wave) {
+  return rampFor(wave).tickSteps;
+}
+
+/** Front speed on this wave in cells per second (one direction). */
+export function frontSpeedFor(wave) {
+  return 60 / ((FIRE.spreadAge + 1) * tickStepsFor(wave));
 }
 
 // Scoring.
@@ -95,6 +138,9 @@ export const COLORS = {
   fire: '#FF7A2F',
   fireCore: '#FFD24A',
   brk: '#6E6A62',
+  field: '#3A3422',
+  fieldTuft: '#7A6C3C',
+  dust: '#A8A196',
   village: '#E8E2D4',
   hud: '#F2EDE3',
   accent: '#FFB03A',

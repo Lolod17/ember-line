@@ -9,6 +9,7 @@ export const KEY_ACTIONS = {
   KeyR: 'restart',
   KeyP: 'pause',
   Escape: 'pause',
+  KeyM: 'sound',
 };
 
 export function createInput(canvas, getViewport) {

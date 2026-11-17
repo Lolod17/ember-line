@@ -1,4 +1,4 @@
-// Firebreaks and water. A break can only be cut through standing trees; each new break cell costs
+// Firebreaks and water. A break can only be cut through standing trees (never fields or clearings); each new break cell costs
 // one unit of water, painting over an existing break is free, and erasing a break gives its water
 // back. Strokes are rasterised as 8-connected lines, which a 4-way fire can never slip through.
 import { GRID } from './config.js';
@@ -29,8 +29,11 @@ export function eraseCell(board, water, c, r) {
   return true;
 }
 
-/** Apply a stroke segment between two cells (inclusive), painting or erasing along it. */
-export function strokeCells(board, water, from, to, erase) {
+/**
+ * Apply a stroke segment between two cells (inclusive), painting or erasing along it. Cells
+ * newly painted are appended to `out` (when given) as {c, r}.
+ */
+export function strokeCells(board, water, from, to, erase, out = null) {
   let x0 = from.c;
   let y0 = from.r;
   const x1 = to.c;
@@ -43,7 +46,10 @@ export function strokeCells(board, water, from, to, erase) {
   let changed = 0;
   for (let guard = 0; guard < 200; guard += 1) {
     const did = erase ? eraseCell(board, water, x0, y0) : paintCell(board, water, x0, y0);
-    if (did) changed += 1;
+    if (did) {
+      changed += 1;
+      if (out) out.push({ c: x0, r: y0 });
+    }
     if (x0 === x1 && y0 === y1) break;
     const e2 = 2 * err;
     if (e2 >= dy) {

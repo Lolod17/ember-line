@@ -1,10 +1,10 @@
 // Drawing the board: forest, fire, ash, breaks and the village, all with canvas primitives.
 // Per-cell variation is a hash of the cell index; flicker is a hash of the animation tick,
 // so the same state always draws the same picture.
-import { GRID, COLORS, FIRE, VIEW, HOUSES, SMOKE_RANGE } from './config.js';
+import { GRID, COLORS, FIRE, VIEW, HOUSES, SMOKE_RANGE, DUST } from './config.js';
 import { cellHash } from './rng.js';
 import {
-  GROUND, TREE, FIRE_CELL, BURNT, BREAK, VILLAGE_CELLS, VILLAGE_BOX, HOUSE_CELLS,
+  GROUND, TREE, FIRE_CELL, BURNT, BREAK, FIELD, VILLAGE_CELLS, VILLAGE_BOX, HOUSE_CELLS, FIELD_CELLS,
   isHolding, isFront, houseStanding,
 } from './grid.js';
 
@@ -77,6 +77,30 @@ function drawGround(ctx, i, x, y) {
   }
 }
 
+const FIELD_SET = new Set(FIELD_CELLS);
+
+/** A field: tilled earth with rows of short stalks. Fields burn, but no break can be dug here. */
+function drawField(ctx, i, x, y) {
+  ctx.fillStyle = COLORS.field;
+  ctx.fillRect(x, y, S, S);
+  ctx.fillStyle = COLORS.fieldTuft;
+  for (let row = 0; row < 3; row += 1) {
+    const ry = y + 7 + row * 8;
+    for (let k = 0; k < 4; k += 1) {
+      const px = x + 3 + k * 6 + Math.floor(cellHash(i, 70 + row * 4 + k) * 3);
+      ctx.fillRect(px, ry - 3 - Math.floor(cellHash(i, 90 + k) * 2), 1, 4);
+    }
+  }
+}
+
+/** A field that has burned: dark stubble rows. */
+function drawBurntField(ctx, i, x, y) {
+  ctx.fillStyle = COLORS.burnt;
+  ctx.fillRect(x, y, S, S);
+  ctx.fillStyle = '#2A221C';
+  for (let row = 0; row < 3; row += 1) ctx.fillRect(x + 3, y + 6 + row * 8, S - 6, 1);
+}
+
 function drawBurnt(ctx, i, x, y) {
   ctx.fillStyle = COLORS.burnt;
   ctx.fillRect(x, y, S, S);
@@ -106,10 +130,12 @@ function flameFrame(i, anim) {
  */
 function drawFire(ctx, i, x, y, age, anim, bare = false) {
   const frame = flameFrame(i, anim);
+  const field = FIELD_SET.has(i);
   const pulse = frame === 1 ? 1 : frame === 2 ? 0.55 : 0.2;
   if (age < 0) {
     // Kindling: the fire has landed but not yet taken hold.
-    if (!bare) drawTree(ctx, i, x, y, BURN_SHADES);
+    if (!bare && field) drawField(ctx, i, x, y);
+    else if (!bare) drawTree(ctx, i, x, y, BURN_SHADES);
     ctx.fillStyle = COLORS.fire;
     ctx.globalAlpha = 0.55 + 0.45 * pulse;
     ctx.beginPath();
@@ -122,7 +148,7 @@ function drawFire(ctx, i, x, y, age, anim, bare = false) {
   if (!bare) {
     ctx.fillStyle = COLORS.burning;
     ctx.fillRect(x, y, S, S);
-    drawTree(ctx, i, x, y, [shade(COLORS.burning, -0.12)]);
+    if (!field) drawTree(ctx, i, x, y, [shade(COLORS.burning, -0.12)]);
   }
   const strength = Math.min(1, 0.35 + life * 1.1);
   const h = S * 0.95 * FLAME_HEIGHT[frame] * strength;
@@ -300,17 +326,34 @@ function smokeSides(board, standing) {
 }
 
 /** The village: warm light under standing houses, the houses, flames on burning ones, smoke. */
-function drawVillage(ctx, board, anim) {
+function drawVillage(ctx, board, anim, won) {
   const standing = houseStanding(board);
   ctx.globalCompositeOperation = 'lighter';
+  // After a won run every window burns bright, breathing slowly: the village celebrating.
+  const glowAlpha = won ? 0.75 + 0.25 * Math.sin((anim / 90) * Math.PI * 2) : 0.5;
+  const grow = won ? 1.6 : 1;
   HOUSE_SPOTS.forEach((p, k) => {
     if (!standing[k]) return;
-    ctx.globalAlpha = 0.5;
-    ctx.drawImage(warm, p.x - 30, p.base - 34, 60, 50);
+    ctx.globalAlpha = glowAlpha;
+    ctx.drawImage(warm, p.x - 30 * grow, p.base - 9 - 25 * grow, 60 * grow, 50 * grow);
   });
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
   HOUSE_SPOTS.forEach((p, k) => drawHouse(ctx, p, k, standing[k], anim));
+  if (won) {
+    // Gold sparks rise off the roofs: the run is won. Positions are a function of the tick.
+    for (let e = 0; e < 30; e += 1) {
+      const p = HOUSE_SPOTS[e % HOUSE_SPOTS.length];
+      const t = ((anim + e * 13) % 120) / 120;
+      const ex = p.x + (cellHash(e, 87) - 0.5) * 40 + Math.sin(t * 7 + e) * 5;
+      const ey = p.base - p.h - t * 120;
+      ctx.globalAlpha = (1 - t) * Math.min(1, t * 5);
+      ctx.fillStyle = e % 3 ? COLORS.accent : COLORS.rim;
+      const size = e % 4 === 0 ? 4 : 3;
+      ctx.fillRect(Math.round(ex), Math.round(ey), size, size);
+    }
+    ctx.globalAlpha = 1;
+  }
   for (const i of VILLAGE_CELLS) {
     if (board.type[i] !== FIRE_CELL) continue;
     const c = i % GRID.cols;
@@ -354,12 +397,14 @@ export function drawBoard(ctx, board, opts) {
     const t = type[i];
     if (VILLAGE_SET.has(i)) drawYard(ctx, x, y);
     else if (t === TREE) drawTree(ctx, i, x, y, TREE_SHADES);
+    else if (t === FIELD) drawField(ctx, i, x, y);
     else if (t === GROUND) drawGround(ctx, i, x, y);
+    else if (t === BURNT && FIELD_SET.has(i)) drawBurntField(ctx, i, x, y);
     else if (t === BURNT) drawBurnt(ctx, i, x, y);
     else if (t === BREAK) drawBreak(ctx, i, x, y, isHolding(board, i), anim);
     else if (t === FIRE_CELL) drawFire(ctx, i, x, y, age[i], anim);
   }
-  const standing = drawVillage(ctx, board, anim);
+  const standing = drawVillage(ctx, board, anim, opts.won);
   // Light from the flames spills over neighbouring cells.
   ctx.globalCompositeOperation = 'lighter';
   for (let i = 0; i < type.length; i += 1) {
@@ -383,12 +428,49 @@ export function drawBoard(ctx, board, opts) {
   ctx.lineWidth = 2;
   ctx.strokeRect(GRID.x - 1, GRID.y - 1, GRID.cols * S + 2, GRID.rows * S + 2);
   if (opts.hover) {
-    ctx.strokeStyle = opts.hover.erase ? '#E0603A' : COLORS.hud;
-    ctx.globalAlpha = 0.8;
+    const hx = GRID.x + opts.hover.c * S;
+    const hy = GRID.y + opts.hover.r * S;
+    const field = type[opts.hover.r * GRID.cols + opts.hover.c] === FIELD;
+    ctx.strokeStyle = opts.hover.erase ? '#E0603A' : field ? COLORS.fieldTuft : COLORS.hud;
+    ctx.globalAlpha = field ? 0.6 : 0.8;
     ctx.lineWidth = 2;
-    ctx.strokeRect(GRID.x + opts.hover.c * S + 1, GRID.y + opts.hover.r * S + 1, S - 2, S - 2);
+    ctx.strokeRect(hx + 1, hy + 1, S - 2, S - 2);
+    if (field && !opts.hover.erase) {
+      // Fields cannot be dug: the brush shows a cross instead of a box.
+      ctx.beginPath();
+      ctx.moveTo(hx + 7, hy + 7);
+      ctx.lineTo(hx + S - 7, hy + S - 7);
+      ctx.moveTo(hx + S - 7, hy + 7);
+      ctx.lineTo(hx + 7, hy + S - 7);
+      ctx.stroke();
+    }
     ctx.globalAlpha = 1;
   }
+}
+
+const DUST_SHADES = [COLORS.dust, '#C9C2B4', '#E2DCD0'];
+
+/**
+ * Dust from finished strokes. Each mote drifts up and out, slows, and fades over DUST.life
+ * steps; its place is a pure function of (anim - born), so pausing freezes it in place.
+ */
+export function drawDust(ctx, bursts, anim) {
+  for (const burst of bursts) {
+    const t = anim - burst.born;
+    if (t < 0 || t >= DUST.life) continue;
+    const u = t / DUST.life;
+    const travel = t * (1 - u * 0.5); // eases out
+    ctx.globalAlpha = 0.95 * (1 - u * u);
+    for (const m of burst.motes) {
+      // Each mote is a little puff that swells as it thins out.
+      const rad = m.size + u * 3;
+      ctx.fillStyle = DUST_SHADES[m.shade];
+      ctx.beginPath();
+      ctx.arc(m.x + m.vx * travel, m.y + m.vy * travel, rad, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
 }
 
 /** Darken everything behind an overlay. */

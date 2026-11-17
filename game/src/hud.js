@@ -1,5 +1,5 @@
-// Text and panels: the HUD band, the title card, the wave-cleared and game-over breakdowns,
-// and the pause card. System fonts only.
+// Text and panels: the HUD band, the title card, the wave-cleared, game-over and win
+// breakdowns, and the pause card. System fonts only.
 import { VIEW, GRID, COLORS, FONT, SCORE } from './config.js';
 import { veil } from './render.js';
 
@@ -49,6 +49,8 @@ export function drawHud(ctx, h) {
   text(ctx, 'EMBER LINE', GRID.x, 46, 22, COLORS.hud, 'left', 800, 3);
   text(ctx, 'WAVE', 360, 30, 12, DIM, 'left', 700, 2);
   text(ctx, String(h.wave), 360, 58, 28, COLORS.hud, 'left', 800);
+  ctx.font = `800 28px ${FONT}`;
+  text(ctx, `/${h.waves}`, 362 + ctx.measureText(String(h.wave)).width, 58, 15, DIM, 'left', 700);
 
   // Water: a bar that drains as breaks are painted.
   const bx = 440;
@@ -76,11 +78,13 @@ export function drawHud(ctx, h) {
   ctx.fillStyle = h.erase ? '#5A2A1E' : '#2A2722';
   ctx.fillRect(chipX, 34, 84, 26);
   text(ctx, h.erase ? 'ERASE' : 'PAINT', chipX + 42, 52, 13, h.erase ? '#FFB89A' : COLORS.hud, 'center', 800, 2);
+  // Sound state, always shown: off by default, M toggles it.
+  text(ctx, h.sound ? 'M · SOUND ON' : 'M · SOUND OFF', chipX, 26, 10, h.sound ? COLORS.accent : DIM, 'left', 700, 1);
 
   text(ctx, 'SCORE', GRID.x + GRID.cols * GRID.cell, 30, 12, DIM, 'right', 700, 2);
   text(ctx, h.score.toLocaleString('en-US'), GRID.x + GRID.cols * GRID.cell, 60, 30, COLORS.accent, 'right', 800);
 
-  const hint = 'drag: paint firebreak   ·   X: erase mode   ·   P: pause   ·   R: restart run';
+  const hint = 'drag: paint firebreak (not in the fields)   ·   X: erase   ·   P: pause   ·   M: sound   ·   R: restart run';
   text(ctx, hint, W / 2, VIEW.height - 6, 13, DIM, 'center', 500);
 }
 
@@ -90,11 +94,13 @@ export function drawTitle(ctx, anim) {
   ctx.fillRect(0, 200, W, 330);
   wordmark(ctx, W / 2, 330, 112, anim);
   text(ctx, 'Fire spreads tick by tick. Paint firebreaks with a fixed ration of water — keep it from the village.',
-    W / 2, 418, 20, COLORS.hud, 'center', 500);
+    W / 2, 410, 20, COLORS.hud, 'center', 500);
+  text(ctx, 'Hold the line for 8 waves. The fields around the houses cannot be dug.',
+    W / 2, 436, 16, DIM, 'center', 500);
   ctx.globalAlpha = 0.6 + 0.4 * Math.abs(Math.sin(anim / 30));
-  text(ctx, 'press space to start', W / 2, 474, 26, COLORS.accent, 'center', 800, 4);
+  text(ctx, 'press space to start', W / 2, 478, 26, COLORS.accent, 'center', 800, 4);
   ctx.globalAlpha = 1;
-  text(ctx, 'drag to paint  ·  X erase  ·  Space next wave  ·  P pause  ·  R restart', W / 2, 510, 14, DIM, 'center', 500);
+  text(ctx, 'drag to paint  ·  X erase  ·  Space next wave  ·  P pause  ·  M sound  ·  R restart', W / 2, 512, 14, DIM, 'center', 500);
 }
 
 function panel(ctx, w, h) {
@@ -134,11 +140,13 @@ export function drawCleared(ctx, s) {
   veil(ctx, 0.45);
   const { x, y } = panel(ctx, 560, 360);
   text(ctx, `WAVE ${s.wave} HELD`, W / 2, y + 62, 40, COLORS.hud, 'center', 800, 4);
-  text(ctx, 'the fire is out — the village stands', W / 2, y + 94, 16, DIM, 'center', 500);
+  const left = s.waves - s.wave;
+  text(ctx, `the fire is out — ${left === 1 ? 'one wave' : `${left} waves`} to go`, W / 2, y + 94, 16, DIM, 'center', 500);
   breakdownRows(ctx, x + 50, y + 150, 460, rowsFor(s.trees, 1, s.water));
   text(ctx, 'RUN SCORE', x + 50, y + 290, 16, DIM, 'left', 700, 2);
   text(ctx, s.total.toLocaleString('en-US'), x + 510, y + 292, 30, COLORS.accent, 'right', 800);
-  text(ctx, 'Space or click: next wave   ·   R: restart run', W / 2, y + 336, 15, COLORS.hud, 'center', 600);
+  const next = left === 1 ? 'the last wave' : 'next wave';
+  text(ctx, `Space or click: ${next}   ·   R: restart run`, W / 2, y + 336, 15, COLORS.hud, 'center', 600);
 }
 
 /**
@@ -173,6 +181,50 @@ export function drawOver(ctx, s) {
   text(ctx, 'FINAL SCORE', lx, y + 270, 13, DIM, 'left', 700, 2);
   text(ctx, s.total.toLocaleString('en-US'), lx, y + 312, 44, COLORS.accent, 'left', 800);
   text(ctx, 'R, Space or click: new run', lx, y + 360, 15, COLORS.hud, 'left', 700, 1);
+}
+
+/**
+ * The run is won: the game-over card's twin, in gold. Same place, same see-through card over
+ * the live field, so the village that held stays in view, glowing, beside it.
+ */
+export function drawWon(ctx, s) {
+  veil(ctx, 0.3);
+
+  const w = 330;
+  const h = 432;
+  const x = GRID.x + GRID.cols * GRID.cell - w - 24;
+  const y = (VIEW.height - h) / 2 + 14;
+  ctx.fillStyle = 'rgba(20,17,14,0.86)';
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = COLORS.accent;
+  ctx.fillRect(x, y, 4, h);
+  const lx = x + 30;
+  // The title glows: a soft warm halo that breathes with the village's lights.
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,176,58,0.55)';
+  ctx.shadowBlur = 14 + 6 * Math.sin((s.anim / 90) * Math.PI * 2);
+  text(ctx, 'THE LINE', lx, y + 54, 34, COLORS.accent, 'left', 800, 3);
+  text(ctx, 'HELD', lx, y + 92, 34, COLORS.accent, 'left', 800, 3);
+  ctx.restore();
+  text(ctx, `all ${s.waves} waves survived — the village stands`, lx, y + 120, 15, DIM, 'left', 500);
+  // One pip per wave held.
+  for (let k = 0; k < s.waves; k += 1) {
+    ctx.fillStyle = COLORS.accent;
+    ctx.fillRect(lx + k * 34, y + 138, 26, 6);
+  }
+  const lines = [
+    [`${s.trees.toLocaleString('en-US')} trees saved`, s.trees * SCORE.tree],
+    [`${s.waves} waves survived`, s.waves * SCORE.wave],
+    [`${s.water.toLocaleString('en-US')} water banked`, s.water * SCORE.water],
+  ];
+  lines.forEach(([label, pts], k) => {
+    const ly = y + 188 + k * 30;
+    text(ctx, label, lx, ly, 18, COLORS.hud, 'left', 500);
+    text(ctx, `+${pts.toLocaleString('en-US')}`, x + w - 30, ly, 16, DIM, 'right', 600);
+  });
+  text(ctx, 'FINAL SCORE', lx, y + 298, 13, DIM, 'left', 700, 2);
+  text(ctx, s.total.toLocaleString('en-US'), lx, y + 346, 50, COLORS.accent, 'left', 800);
+  text(ctx, 'R, Space or click: new run', lx, y + 398, 15, COLORS.hud, 'left', 700, 1);
 }
 
 export function drawPaused(ctx) {
