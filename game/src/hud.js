@@ -1,6 +1,6 @@
 // Text and panels: the HUD band, the title card, the wave-cleared, game-over and win
 // breakdowns, and the pause card. System fonts only.
-import { VIEW, GRID, COLORS, FONT, SCORE } from './config.js';
+import { VIEW, GRID, COLORS, FONT, SCORE, WIN_WAVES } from './config.js';
 import { veil } from './render.js';
 
 const W = VIEW.width;
@@ -171,7 +171,7 @@ export function drawOver(ctx, s) {
   const lines = [
     [`${s.trees.toLocaleString('en-US')} trees saved`, s.trees * SCORE.tree],
     [`${s.waves} ${s.waves === 1 ? 'wave' : 'waves'} survived`, s.waves * SCORE.wave],
-    [`${s.water.toLocaleString('en-US')} water left`, s.water * SCORE.water],
+    [`${s.water.toLocaleString('en-US')} water banked`, s.water * SCORE.water],
   ];
   lines.forEach(([label, pts], k) => {
     const ly = y + 160 + k * 30;
@@ -222,6 +222,8 @@ export function drawWon(ctx, s) {
     text(ctx, label, lx, ly, 18, COLORS.hud, 'left', 500);
     text(ctx, `+${pts.toLocaleString('en-US')}`, x + w - 30, ly, 16, DIM, 'right', 600);
   });
+  // Every wave was completed, so the bank is exactly the leftovers of WIN_WAVES waves.
+  text(ctx, `across ${WIN_WAVES} waves`, lx, y + 188 + 2 * 30 + 18, 12, DIM, 'left', 500);
   text(ctx, 'FINAL SCORE', lx, y + 298, 13, DIM, 'left', 700, 2);
   text(ctx, s.total.toLocaleString('en-US'), lx, y + 346, 50, COLORS.accent, 'left', 800);
   text(ctx, 'R, Space or click: new run', lx, y + 398, 15, COLORS.hud, 'left', 700, 1);

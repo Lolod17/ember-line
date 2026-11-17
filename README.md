@@ -24,6 +24,12 @@ Then open http://localhost:8080.
 | P | Pause |
 | R | Restart |
 
+## Score
+
+`score = trees saved × 10 + waves survived × 250 + water banked × 2`
+
+Water is banked at the end of every wave that is completed and also when the run ends; the HUD bar shows the current wave's water, and the result panels show the banked total.
+
 ## About
 
 The game is a single static page under `game/` with no build step and no network requests.
